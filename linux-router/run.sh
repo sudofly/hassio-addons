@@ -19,6 +19,7 @@ CHANNEL=$(jq --raw-output ".channel" $CONFIG_PATH)
 ADDRESS=$(jq --raw-output ".address" $CONFIG_PATH)
 INTERFACE=$(jq --raw-output ".interface" $CONFIG_PATH)
 ALLOW_INTERNET=$(jq --raw-output ".allow_internet" $CONFIG_PATH)
+BAN_PRIV=$(jq --raw-output ".allow_lan" $CONFIG_PATH)
 HIDE_SSID=$(jq --raw-output ".hide_ssid" $CONFIG_PATH)
 USER_ARGS=$(jq --raw-output ".user_args" $CONFIG_PATH)
 
@@ -62,15 +63,22 @@ echo "Network interface set to ${INTERFACE}"
 
 EXTRA_ARGS=""
 
+if [[ "$CHANNEL" -gt 0 ]]; then
+    EXTRA_ARGS+="-c ${CHANNEL} "
+fi
+
 if [[ ${ALLOW_INTERNET} = false ]]; then
     EXTRA_ARGS+="-n "
+fi
+
+if [[ ${BAN_PRIV} == false ]]; then
+    EXTRA_ARGS+="--ban-priv "
 fi
 
 if [[ ${HIDE_SSID} = true ]]; then
     EXTRA_ARGS+="--hidden "
 fi
 
-EXTRA_ARGS+="--ban-priv "
 EXTRA_ARGS+="-g ${ADDRESS} "
 
 ./lnxrouter --ap ${INTERFACE} ${SSID} --password ${PASSPHRASE} ${EXTRA_ARGS} ${USER_ARGS}
