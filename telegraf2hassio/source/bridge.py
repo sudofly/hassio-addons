@@ -63,6 +63,7 @@ class telegraf_mqtt_bridge():
 
         # Use properties names to differentiate measurements with same name
         if len(jdata['tags']) > 1: 
+            sensor_name += ('_' + jdata['tags'].get('chip', "")).rstrip("_")
             sensor_name += ('_' + jdata['tags'].get('device', "")).rstrip("_")
             sensor_name += ('_' + jdata['tags'].get('interface', "")).rstrip("_")
             sensor_name += ('_' + jdata['tags'].get('feature', "")).rstrip("_")
