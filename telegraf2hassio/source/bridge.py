@@ -280,8 +280,6 @@ class host():
         self.info["name"] = self.name  # Use actual host name (e.g., "GB-BXBT")
         self.info["sw_version"] = VERSION
         self.info["manufacturer"] = "telegraf2ha"
-        # Add suggested area for better organization
-        self.info["suggested_area"] = f"{self.name} Monitoring"
 
     def add_sensor(self, sensor_name):
         # To create the sensor name, also check for extra tags (for the case of disks for example)
@@ -299,6 +297,48 @@ class sensor():
         self.name = name
         self.measurements = {}
         self.parent_host = parent_host
+
+    def get_sensor_device_info(self):
+        """Generate device info based on sensor type rather than host"""
+        # Extract the main sensor type from the sensor name (before first underscore and UID)
+        sensor_base_name = self.name.split('_')[0] if '_' in self.name else self.name
+        
+        # Remove the UID suffix (last 2 characters after final underscore)
+        if '_' in self.name:
+            name_parts = self.name.split('_')
+            if len(name_parts) > 1 and len(name_parts[-1]) == 2:
+                # Remove UID part
+                name_parts = name_parts[:-1]
+            sensor_type = name_parts[0] if name_parts else self.name
+        else:
+            sensor_type = self.name
+            
+        # Map sensor types to device info
+        device_mapping = {
+            'cpu': {'name': 'CPU', 'model': 'Central Processing Unit'},
+            'gpu': {'name': 'GPU', 'model': 'Graphics Processing Unit'},
+            'acpi': {'name': 'ACPI', 'model': 'ACPI Thermal Zones'},
+            'soc': {'name': 'SoC', 'model': 'System on Chip'},
+            'memory': {'name': 'Memory', 'model': 'System Memory'},
+            'disk': {'name': 'Storage', 'model': 'Disk Storage'},
+            'network': {'name': 'Network', 'model': 'Network Interface'},
+            'sensors': {'name': 'System Sensors', 'model': 'Hardware Sensors'}
+        }
+        
+        device_info = device_mapping.get(sensor_type, {
+            'name': sensor_type.upper(), 
+            'model': f'{sensor_type.title()} Sensor'
+        })
+        
+        return {
+            "identifiers": [f"telegraf2ha_{self.parent_host.name}_{sensor_type}"],
+            "model": device_info['model'],
+            "name": f"{self.parent_host.name} {device_info['name']}",
+            "sw_version": VERSION,
+            "manufacturer": "telegraf2ha",
+            "suggested_area": f"{self.parent_host.name} Monitoring",
+            "via_device": f"telegraf2ha_{self.parent_host.name}"  # Link to host device
+        }
 
     def add_measurement(self, measurement_name):
         current_measurement = self.measurements.get(measurement_name)
@@ -321,7 +361,7 @@ class measurement():
             "name": f"{self.parent_sensor.parent_host.name}_{self.parent_sensor.name[0:-3]}_{self.name}",
             "state_topic": f"{STATE_PREFIX}/{self.parent_sensor.parent_host.name}/{self.parent_sensor.name}/data",
             "unit_of_measurement": "",
-            "device": self.parent_sensor.parent_host.info,
+            "device": self.parent_sensor.get_sensor_device_info(),
             "unique_id": self.uid,
             "platform": "mqtt",
             # Make the template such that we can use the telegraph topic straight
