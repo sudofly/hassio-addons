@@ -311,12 +311,17 @@ class measurement():
     def __init__(self, parent_sensor, name) -> None:
         self.name = name
         self.parent_sensor = parent_sensor
-        self.topic = f"{HA_PREFIX}/{self.parent_sensor.parent_host.name}/{self.parent_sensor.name}_{self.name}"
-        self.uid = f"{self.parent_sensor.parent_host.name}_{self.parent_sensor.name}_{self.name}"
+        
+        # Construct a clean name and unique ID without redundant hostnames
+        base_sensor_name = self.parent_sensor.name.rsplit('_', 1)[0] # Removes the _xx UID suffix
+        self.clean_name = f"{base_sensor_name}_{self.name}"
+        self.uid = f"telegraf2ha_{self.parent_sensor.parent_host.name}_{self.clean_name}"
+        
+        self.topic = f"{HA_PREFIX}/{self.parent_sensor.parent_host.name}/{self.clean_name}"
 
         config_payload = {
             # "~": self.topic,
-            "name": f"{self.parent_sensor.parent_host.name}_{self.parent_sensor.name[0:-3]}_{self.name}",
+            "name": self.clean_name.replace("_", " ").title(), # Create a nice friendly name
             "state_topic": f"{STATE_PREFIX}/{self.parent_sensor.parent_host.name}/{self.parent_sensor.name}/data",
             "unit_of_measurement": "",
             "device": self.parent_sensor.parent_host.info,
