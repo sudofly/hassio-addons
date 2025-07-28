@@ -314,13 +314,9 @@ class measurement():
         self.topic = f"{HA_PREFIX}/{self.parent_sensor.parent_host.name}/{self.parent_sensor.name}_{self.name}"
         self.uid = f"{self.parent_sensor.parent_host.name}_{self.parent_sensor.name}_{self.name}"
 
-        # Create a more readable name for Home Assistant UI
-        base_sensor_name = self.parent_sensor.name[0:-3]  # Strip the unique hash
-        pretty_name = f"{base_sensor_name}_{self.name}".replace("_", " ").title()
-
         config_payload = {
             # "~": self.topic,
-            "name": pretty_name, # e.g. "Cpu Core 0 Temp Input"
+            "name": f"{self.parent_sensor.parent_host.name}_{self.parent_sensor.name[0:-3]}_{self.name}",
             "state_topic": f"{STATE_PREFIX}/{self.parent_sensor.parent_host.name}/{self.parent_sensor.name}/data",
             "unit_of_measurement": "",
             "device": self.parent_sensor.parent_host.info,
