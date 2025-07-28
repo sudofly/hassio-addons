@@ -2,6 +2,7 @@ from cmath import log
 import json
 import logging
 import hashlib
+import time
 from copy import deepcopy
 
 VERSION = "0.1"
@@ -47,7 +48,11 @@ class telegraf_mqtt_bridge():
         self.hosts = {}
         self.cm_dict = {}
         self.transmit_callback = transmit_callback
-
+        
+        # Track discovery topics for cleanup
+        self.active_discovery_topics = set()
+        self.last_seen_discovery_topics = {}  # topic -> timestamp
+        self.discovery_cleanup_interval = 300  # 5 minutes in seconds
 
         for uid in cm_str_list.split(","):
             # Initialize a dict with the desired calculated values UIDs
@@ -57,16 +62,60 @@ class telegraf_mqtt_bridge():
         # Build the host name of the current meassage
         return jdata['tags']['host']
 
-    def __get_sensor_name(self, jdata):
-        # Build up the sensor name
-        sensor_name = jdata['name']
+    def __simplify_chip_name(self, chip_name):
+        """Extract meaningful part from chip name for better readability"""
+        if not chip_name:
+            return ""
+        
+        # Remove common suffixes that don't add value
+        chip_name = chip_name.replace("-isa-0000", "").replace("-acpi-0", "").replace("-virtual-0", "")
+        
+        # Extract the main chip identifier (first part before any remaining dashes)
+        main_part = chip_name.split('-')[0]
+        
+        # Common chip name mappings for better readability
+        chip_mappings = {
+            'coretemp': 'cpu',
+            'acpitz': 'acpi',
+            'soc_dts1': 'soc',
+            'nouveau': 'gpu_nouveau',
+            'amdgpu': 'gpu_amd',
+            'nvidia': 'gpu_nvidia'
+        }
+        
+        return chip_mappings.get(main_part, main_part)
 
+    def __get_sensor_name(self, jdata):
+        # Build up the sensor name with improved readability
+        base_name = jdata['name']
+        
         # Use properties names to differentiate measurements with same name
-        if len(jdata['tags']) > 1: 
-            sensor_name += ('_' + jdata['tags'].get('chip', "")).rstrip("_")
-            sensor_name += ('_' + jdata['tags'].get('device', "")).rstrip("_")
-            sensor_name += ('_' + jdata['tags'].get('interface', "")).rstrip("_")
-            sensor_name += ('_' + jdata['tags'].get('feature', "")).rstrip("_")
+        if len(jdata['tags']) > 1:
+            chip = jdata['tags'].get('chip', "")
+            device = jdata['tags'].get('device', "")
+            interface = jdata['tags'].get('interface', "")
+            feature = jdata['tags'].get('feature', "")
+            
+            # Start with a more meaningful name than the generic 'sensors'
+            if chip:
+                simplified_chip = self.__simplify_chip_name(chip)
+                if simplified_chip and base_name == "sensors":
+                    # Replace generic 'sensors' with meaningful chip name
+                    sensor_name = simplified_chip
+                else:
+                    sensor_name = base_name + '_' + simplified_chip
+            else:
+                sensor_name = base_name
+                
+            # Add other tags if they provide meaningful information
+            if device and device != chip:  # Don't duplicate if device same as chip
+                sensor_name += '_' + device
+            if interface:
+                sensor_name += '_' + interface
+            if feature:
+                sensor_name += '_' + feature
+        else:
+            sensor_name = base_name
 
         # Append this unique suffix to differ same-sensor-named topics
         # that contain different tags, that confuse hassio
@@ -109,7 +158,11 @@ class telegraf_mqtt_bridge():
         current_sensor, is_new_s = current_host.add_sensor(sensor_name)
         # Add unknown measurements to each sensor 
         for measurement_name in self.__get_measurements_list(jdata):
-            _, is_new_m = current_sensor.add_measurement(measurement_name)
+            measurement_obj, is_new_m = current_sensor.add_measurement(measurement_name)
+            
+            # Update discovery topic timestamp for both new and existing measurements
+            discovery_topic = f"{HA_PREFIX}/{host_name}/{sensor_name}_{measurement_name}/config"
+            self.register_discovery_topic(discovery_topic)
             
             if is_new_m:
                 uid = self.__get_unique_id(jdata, measurement_name)
@@ -139,6 +192,15 @@ class telegraf_mqtt_bridge():
 
         self.transmit_callback(topic_data, json.dumps(jdata['fields']))
 
+        # Periodically cleanup old discovery topics (every 10 messages approximately)
+        if hasattr(self, '_message_count'):
+            self._message_count += 1
+        else:
+            self._message_count = 1
+            
+        if self._message_count % 10 == 0:
+            self.cleanup_old_discovery_topics()
+
         if is_new:
             logging.info(f"Added sensor: {self.print(jdata)}")
 
@@ -164,6 +226,47 @@ class telegraf_mqtt_bridge():
             return current_host, True
 
         return current_host, False
+
+    def register_discovery_topic(self, discovery_topic):
+        """Register a discovery topic as active"""
+        self.active_discovery_topics.add(discovery_topic)
+        self.last_seen_discovery_topics[discovery_topic] = time.time()
+
+    def cleanup_old_discovery_topics(self, max_age_seconds=None):
+        """Remove old discovery topics that haven't been seen recently"""
+        if max_age_seconds is None:
+            max_age_seconds = self.discovery_cleanup_interval
+            
+        current_time = time.time()
+        topics_to_remove = []
+        
+        for topic, last_seen in self.last_seen_discovery_topics.items():
+            if current_time - last_seen > max_age_seconds:
+                topics_to_remove.append(topic)
+        
+        for topic in topics_to_remove:
+            # Send empty payload to remove from Home Assistant
+            self.transmit_callback(topic, "", retain=True)
+            self.active_discovery_topics.discard(topic)
+            del self.last_seen_discovery_topics[topic]
+            logging.info(f"Removed old discovery topic: {topic}")
+        
+        if topics_to_remove:
+            logging.info(f"Cleaned up {len(topics_to_remove)} old discovery topics")
+        
+        return len(topics_to_remove)
+
+    def force_cleanup_all_discovery_topics(self):
+        """Force removal of all tracked discovery topics (useful for testing or major changes)"""
+        removed_count = 0
+        for topic in list(self.active_discovery_topics):
+            self.transmit_callback(topic, "", retain=True)
+            removed_count += 1
+            
+        self.active_discovery_topics.clear()
+        self.last_seen_discovery_topics.clear()
+        logging.info(f"Force removed all {removed_count} discovery topics")
+        return removed_count
 
 class host():
     def __init__(self, parent_listener, name) -> None:
@@ -224,4 +327,8 @@ class measurement():
         }
 
         # If it is a new measumente, announce it to hassio
-        self.parent_sensor.parent_host.parent_listener.transmit_callback(f"{self.topic}/config", json.dumps(config_payload), retain=True)
+        discovery_topic = f"{self.topic}/config"
+        self.parent_sensor.parent_host.parent_listener.transmit_callback(discovery_topic, json.dumps(config_payload), retain=True)
+        
+        # Register this discovery topic for tracking and cleanup
+        self.parent_sensor.parent_host.parent_listener.register_discovery_topic(discovery_topic)
