@@ -5,7 +5,7 @@ import hashlib
 import time
 from copy import deepcopy
 
-VERSION = "0.1"
+VERSION = "0.1a"
 HA_PREFIX = "homeassistant/sensor"
 STATE_PREFIX = "telegraf2ha"
 
@@ -275,11 +275,13 @@ class host():
         self.parent_listener = parent_listener
 
         self.info = {}
-        self.info["identifiers"] = "bridge"
-        self.info["model"] = "your_bridge"
-        self.info["name"] = self.name
+        self.info["identifiers"] = [f"telegraf2ha_{self.name}"]  # Unique identifier per host
+        self.info["model"] = "Telegraf Host"
+        self.info["name"] = self.name  # Use actual host name (e.g., "GB-BXBT")
         self.info["sw_version"] = VERSION
         self.info["manufacturer"] = "telegraf2ha"
+        # Add suggested area for better organization
+        self.info["suggested_area"] = f"{self.name} Monitoring"
 
     def add_sensor(self, sensor_name):
         # To create the sensor name, also check for extra tags (for the case of disks for example)
