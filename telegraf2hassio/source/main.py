@@ -4,7 +4,6 @@ import logging
 from paho.mqtt import client as mqtt_client
 from bridge import telegraf_mqtt_bridge
 import argparse
-import time
 
 # This function is called when a message is received from the MQTT broker.
 # The message is then passed to the telegraf_mqtt_bridge
@@ -60,10 +59,6 @@ client.subscribe(args['topic'])
 # Pass the data transmit callback and the list of
 # values to calculate
 tp = telegraf_mqtt_bridge(data_transmit, args['calc'])
-
-# Force remove all old discovery topics on startup to ensure a clean slate
-tp.force_cleanup_all_discovery_topics()
-time.sleep(2)  # Give broker time to process removals
 
 logging.info("Setup finished")
 

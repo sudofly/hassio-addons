@@ -49,11 +49,6 @@ class telegraf_mqtt_bridge():
         self.cm_dict = {}
         self.transmit_callback = transmit_callback
         
-        # Track discovery topics for cleanup
-        self.active_discovery_topics = set()
-        self.last_seen_discovery_topics = {}  # topic -> timestamp
-        self.discovery_cleanup_interval = 300  # 5 minutes in seconds
-
         for uid in cm_str_list.split(","):
             # Initialize a dict with the desired calculated values UIDs
             self.cm_dict[uid] = calc_measurement(uid)
@@ -160,10 +155,6 @@ class telegraf_mqtt_bridge():
         for measurement_name in self.__get_measurements_list(jdata):
             measurement_obj, is_new_m = current_sensor.add_measurement(measurement_name)
             
-            # Update discovery topic timestamp for both new and existing measurements
-            discovery_topic = f"{HA_PREFIX}/{host_name}/{sensor_name}_{measurement_name}/config"
-            self.register_discovery_topic(discovery_topic)
-            
             if is_new_m:
                 uid = self.__get_unique_id(jdata, measurement_name)
                 logging.info(f"Added measurement UID: {uid}")
@@ -192,15 +183,6 @@ class telegraf_mqtt_bridge():
 
         self.transmit_callback(topic_data, json.dumps(jdata['fields']))
 
-        # Periodically cleanup old discovery topics (every 10 messages approximately)
-        if hasattr(self, '_message_count'):
-            self._message_count += 1
-        else:
-            self._message_count = 1
-            
-        if self._message_count % 10 == 0:
-            self.cleanup_old_discovery_topics()
-
         if is_new:
             logging.info(f"Added sensor: {self.print(jdata)}")
 
@@ -226,47 +208,6 @@ class telegraf_mqtt_bridge():
             return current_host, True
 
         return current_host, False
-
-    def register_discovery_topic(self, discovery_topic):
-        """Register a discovery topic as active"""
-        self.active_discovery_topics.add(discovery_topic)
-        self.last_seen_discovery_topics[discovery_topic] = time.time()
-
-    def cleanup_old_discovery_topics(self, max_age_seconds=None):
-        """Remove old discovery topics that haven't been seen recently"""
-        if max_age_seconds is None:
-            max_age_seconds = self.discovery_cleanup_interval
-            
-        current_time = time.time()
-        topics_to_remove = []
-        
-        for topic, last_seen in self.last_seen_discovery_topics.items():
-            if current_time - last_seen > max_age_seconds:
-                topics_to_remove.append(topic)
-        
-        for topic in topics_to_remove:
-            # Send empty payload to remove from Home Assistant
-            self.transmit_callback(topic, "", retain=True)
-            self.active_discovery_topics.discard(topic)
-            del self.last_seen_discovery_topics[topic]
-            logging.info(f"Removed old discovery topic: {topic}")
-        
-        if topics_to_remove:
-            logging.info(f"Cleaned up {len(topics_to_remove)} old discovery topics")
-        
-        return len(topics_to_remove)
-
-    def force_cleanup_all_discovery_topics(self):
-        """Force removal of all tracked discovery topics (useful for testing or major changes)"""
-        removed_count = 0
-        for topic in list(self.active_discovery_topics):
-            self.transmit_callback(topic, "", retain=True)
-            removed_count += 1
-            
-        self.active_discovery_topics.clear()
-        self.last_seen_discovery_topics.clear()
-        logging.info(f"Force removed all {removed_count} discovery topics")
-        return removed_count
 
 class host():
     def __init__(self, parent_listener, name) -> None:
@@ -334,6 +275,3 @@ class measurement():
         # If it is a new measumente, announce it to hassio
         discovery_topic = f"{self.topic}/config"
         self.parent_sensor.parent_host.parent_listener.transmit_callback(discovery_topic, json.dumps(config_payload), retain=True)
-        
-        # Register this discovery topic for tracking and cleanup
-        self.parent_sensor.parent_host.parent_listener.register_discovery_topic(discovery_topic)
